@@ -28,7 +28,7 @@ def info() -> typing.Dict:
         "author":
         "uber_snake_master_360_noscopes",
         "color":
-        "#39FF14",  # Color: neon green
+        "#03d7fc",  # Color: neon green
         "head":
         "silly",
         "tail":
