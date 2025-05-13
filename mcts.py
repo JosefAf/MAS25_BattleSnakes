@@ -1,5 +1,6 @@
 import random
 import time
+import math
 from copy import deepcopy
 
 # Directions and their vector offsets
@@ -25,7 +26,11 @@ class GameState:
         }
         you_id (str): ID of our snake.
     """
-    def __init__(self, board: dict, you_id: str):
+    def __init__(self, board: dict = None, you_id: str = None):
+        # Initialize from existing attributes if called via __new__
+        if board is None:
+            return
+
         # Board dimensions
         self.width = board['width']
         self.height = board['height']
@@ -79,15 +84,13 @@ class GameState:
             if self.is_occupied(new_head):
                 continue
             legal.append(move)
-        # If no safe moves, return all moves to force a decision
         return legal or list(DIRECTIONS.keys())
 
     def apply_moves(self, moves: dict):
         """
         Apply a move for each snake and return the resulting GameState.
-        moves: {snake_id: direction}, others move randomly if absent.
+        moves: {snake_id: direction}, others move randomly.
         """
-        # Deep copy current snake data
         new_snakes = deepcopy(self.snakes)
         new_food = set(self.food)
 
@@ -102,32 +105,24 @@ class GameState:
             head = new_heads[sid]
             ate = head in new_food
             if ate:
-                # Grow: new head + full body
                 snake['body'] = [head] + snake['body']
-                snake['health'] = 100  # reset health
+                snake['health'] = 100
                 new_food.remove(head)
             else:
-                # Move: new head + drop tail
                 snake['body'] = [head] + snake['body'][:-1]
                 snake['health'] -= 1
 
-        # Resolve collisions and wall/health deaths
+        # Resolve collisions and deaths
         survivors = {}
         for sid, snake in new_snakes.items():
             head = snake['body'][0]
-            # Died by wall or starvation
             if not self.in_bounds(head) or snake['health'] <= 0:
                 continue
-            # Died by collision with other body
-            collision = any(
-                (head in other['body'])
-                for oid, other in new_snakes.items() if oid != sid
-            )
-            if collision:
+            if any(head in other['body'] for oid, other in new_snakes.items() if oid != sid):
                 continue
             survivors[sid] = snake
 
-        # Build new state without calling initializer
+        # Build new GameState via __new__ to skip init
         new_state = GameState.__new__(GameState)
         new_state.width = self.width
         new_state.height = self.height
@@ -139,27 +134,20 @@ class GameState:
 
     def is_terminal(self):
         """Return True if game over (our snake dead or only one remains)."""
-        if self.you_id not in self.snakes:
-            return True
-        return len(self.snakes) <= 1
+        return (self.you_id not in self.snakes) or (len(self.snakes) <= 1)
 
     def get_result(self):
         """
         Return 1.0 for win, 0.0 for loss, or heuristic [0,1] otherwise.
-        Heuristic = (my_score - best_other_score + 100) / 200
         """
-        # Loss if we're gone
         if self.you_id not in self.snakes:
             return 0.0
-        # Win if sole survivor
         if len(self.snakes) == 1:
             return 1.0
 
-        # Heuristic comparison
         my = self.snakes[self.you_id]
         my_score = my['health'] + 2 * len(my['body'])
-        other_scores = [s['health'] + 2 * len(s['body'])
-                        for sid,s in self.snakes.items() if sid != self.you_id]
+        other_scores = [s['health'] + 2 * len(s['body']) for sid,s in self.snakes.items() if sid != self.you_id]
         best_other = max(other_scores)
         return (my_score - best_other + 100) / 200
 
@@ -171,16 +159,18 @@ class MCTSNode:
     def __init__(self, state: GameState, parent=None):
         self.state = state
         self.parent = parent
-        self.children = []  # list of child MCTSNode
+        self.children = []
         self.visits = 0
         self.wins = 0.0
-        # Actions not yet tried from this state for our snake
-        self.untried_actions = state.get_legal_moves(state.you_id)
+        # If terminal or our snake is dead, no actions to try
+        if state.is_terminal() or state.you_id not in state.snakes:
+            self.untried_actions = []
+        else:
+            self.untried_actions = state.get_legal_moves(state.you_id)
 
     def expand(self):
         """Create and return a new child node for one untried action."""
         action = self.untried_actions.pop()
-        # Apply our action, opponents random
         next_state = self.state.apply_moves({self.state.you_id: action})
         child = MCTSNode(next_state, parent=self)
         self.children.append((action, child))
@@ -188,35 +178,32 @@ class MCTSNode:
 
     def best_child(self, c_param=1.41):
         """Select child with highest UCB1 value."""
-        choices_weights = []
+        best_score = -float('inf')
+        best_child = None
         for action, child in self.children:
-            # UCB1: (wins/visits) + c * sqrt(ln(N)/visits)
-            exploitation = child.wins / child.visits
-            exploration = c_param * ( (2 * math.log(self.visits) / child.visits) ** 0.5 )
-            choices_weights.append(exploitation + exploration)
-        # Return child with max weight
-        return self.children[choices_weights.index(max(choices_weights))][1]
+            exploit = child.wins / child.visits
+            explore = c_param * math.sqrt(math.log(self.visits) / child.visits)
+            score = exploit + explore
+            if score > best_score:
+                best_score = score
+                best_child = child
+        return best_child
 
     def rollout(self, max_rollout=20):
-        """Simulate a random playout from current state up to max_rollout."""
-        current_state = self.state
+        """Simulate random playout up to max_rollout turns."""
+        current = self.state
         for _ in range(max_rollout):
-            if current_state.is_terminal():
+            if current.is_terminal():
                 break
-            # Random moves for all snakes
-            moves = {
-                sid: random.choice(current_state.get_legal_moves(sid))
-                for sid in current_state.snakes
-            }
-            current_state = current_state.apply_moves(moves)
-        return current_state.get_result()
+            moves = {sid: random.choice(current.get_legal_moves(sid)) for sid in current.snakes}
+            current = current.apply_moves(moves)
+        return current.get_result()
 
     def backpropagate(self, result):
-        """Update this node and ancestors with rollout result."""
+        """Update this node and its ancestors with result."""
         self.visits += 1
         self.wins += result
         if self.parent:
-            # The reward for parent is from its perspective: invert for two-player?
             self.parent.backpropagate(result)
 
 
@@ -226,23 +213,20 @@ def mcts_search(root_state: GameState, time_limit=0.4):
     Return the best action for our snake.
     """
     root = MCTSNode(root_state)
-    end_time = time.time() + time_limit
-    while time.time() < end_time:
+    end = time.time() + time_limit
+    while time.time() < end:
         node = root
-        # 1. Selection
-        while node.untried_actions == [] and node.children:
+        # Selection
+        while not node.untried_actions and node.children:
             node = node.best_child()
-        # 2. Expansion
+        # Expansion
         if node.untried_actions:
             node = node.expand()
-        # 3. Simulation
+        # Simulation
         result = node.rollout()
-        # 4. Backpropagation
+        # Backpropagation
         node.backpropagate(result)
 
-    # Choose the move with most visits
-    best_move, best_node = max(
-        root.children,
-        key=lambda item: item[1].visits
-    )
-    return best_move
+    # Pick action with highest visit count
+    best = max(root.children, key=lambda item: item[1].visits)
+    return best[0]
