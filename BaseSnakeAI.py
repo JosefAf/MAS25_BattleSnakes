@@ -49,22 +49,25 @@ class BaseSnakeAI:
 
         return occupied_cells
 
-    def getReachableCells(self, head_pos):
+    def getReachableCells(self, start_pos):
         """Method returns set of reachable cells from current snake position, using flood 
         fill algorithm with breadth-first search. Note that reachable cells can be reached, 
         but may be unsafe to move into, e.g. if they lead to a dead end."""
 
-        my_head = self.you["body"][0]
         #Using a double-ended queue instead of a list, for faster .add and .pop operations
         #(indexing is faster with lists tho)
-        queue = deque((my_head["x"], my_head["y"]))  #Adding cells as tuples
+        #print("Ay yo dis the start_pos: " + str(start_pos) + "with type: " + str(type(start_pos[0])))
+        queue = deque([start_pos])  #Adding cells as tuples
         visited_cells = set()
         #Using hashset for faster lookup among set of visited cells
         #(checking if a cell has been visited or not)
 
         while queue:  #run loop while queue is not empty
             #pop first element from queue, O(1) complexity :D
-            x, y = queue.popleft()
+            current_position_tuple = queue.popleft()
+            #print("current_position_tuple: " + str(current_position_tuple))
+            x = current_position_tuple[0]
+            y = current_position_tuple[1]
 
             #for each possible movement direction:
             """USE GET NEIGHTBORDS METHOD INSTEAD OF THIS TODO TODO TODO TODOT ERKEDODKWAOP"""
@@ -163,13 +166,15 @@ def move(game_state: typing.Dict) -> typing.Dict:
         closest_food_pos = getClosestFood(my_head_pos,
                                           game_state["board"]["food"])
         #Calculate score for each potential move and return the move with the lowest score
-        next_move = calculateMoveScore(my_head_pos, potential_moves,
-                                       closest_food_pos, game_state["board"])
+        next_move = calculateMoveScore(my_snake_AI, my_head_pos,
+                                       potential_moves, closest_food_pos,
+                                       game_state["board"])
     else:
         closest_food_pos = 0
         #Calculate score for each potential move and return the move with the lowest score
-        next_move = calculateMoveScore(my_head_pos, potential_moves,
-                                       closest_food_pos, game_state["board"])
+        next_move = calculateMoveScore(my_snake_AI, my_head_pos,
+                                       potential_moves, closest_food_pos,
+                                       game_state["board"])
 
     #print(closest_food_pos)
 
@@ -178,9 +183,15 @@ def move(game_state: typing.Dict) -> typing.Dict:
     return {"move": next_move}
 
 
-def calculateMoveScore(my_head_pos, potential_moves, closest_food_pos, board):
+def calculateMoveScore(my_snake_AI, my_head_pos, potential_moves,
+                       closest_food_pos, board):
     """Calculate score for each potential move and return the move with the lowest score,
     according to the heuristic described in the move() function."""
+
+    food_dist_divider = 15
+    #Increase this to make distance_to_closest_food less important in score, and vice versa
+    flood_fill_multiplier = 5
+    #Increase this to make number_of_reachable_cells more important in score, and vice versa
 
     move_scores = {}  #Dict of moves and their scores
 
@@ -190,9 +201,16 @@ def calculateMoveScore(my_head_pos, potential_moves, closest_food_pos, board):
                          my_head_pos[1] + DIRECTIONS[direction][1])
         distance_to_closest_food = manhattanDistance(potential_pos,
                                                      closest_food_pos)
-        #Use flood fill to count the number of free reachable cells from new position TODO TODO TODO TODO
-        move_scores[
-            direction] = distance_to_closest_food * 5  #Add directions as keys and their scores as values
+        #Use flood fill to count the number of free reachable cells from new position
+        number_of_reachable_cells = len(
+            my_snake_AI.getReachableCells(potential_pos))
+        #Add directions as keys and their scores as values
+        if number_of_reachable_cells != 0:
+            move_scores[
+                direction] = distance_to_closest_food / food_dist_divider + flood_fill_multiplier / number_of_reachable_cells
+        else:
+            #to avoid ZeroDivisionError, we set move_scores[direction] to infinity manually
+            move_scores[direction] = math.inf
 
     #LINE BELOW WOULD BE NICE IF IT WORKED MY DAWG
     #next_move = max(move_scores.keys(), key = move_scores.get) #Get key with lowest value in dict
