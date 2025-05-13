@@ -13,7 +13,7 @@
 import random
 import math
 import typing
-import time  # For checking how long monte carlo search takes, and to figure out how many iterations we can do per server tick/ turn of the game
+from mctsV2 import GameState, mcts_search
 
 
 # info is called when you create your Battlesnake on play.battlesnake.com
@@ -65,31 +65,11 @@ def move(game_state: typing.Dict) -> typing.Dict:
     Example of Move Request (the game_state received by move()) and Move Response (move()'s return value, new move dict):                 https://docs.battlesnake.com/api/example-move    """
 
     board = game_state["board"]
-    width = board["width"]  # int 11
-    height = board["height"]  # int 11
-    food = [(f["x"], f["y"]) for f in board["food"]]  # [(x, y), (x, y), ...)]
+    you_id = game_state["you"]["id"]
+    state = GameState(board, you_id)
 
-    hazards = [(h["x"], h["y"])
-               for h in board["hazards"]]  # not used yet, what is it even?
-
-    snakes_data = board["snakes"]
-    all_snakes = [
-    ]  # [[snake_id, health, [(x, y), (x, y), ...]], [snake_id, health, [(x, y), (x, y), ...]], ...]
-    for snake_data in snakes_data:
-        snake = []
-        snake_id = snake_data["id"]
-        health = snake_data["health"]
-        body = [(segment["x"], segment["y"]) for segment in snake_data["body"]]
-
-        snake.append(snake_id)
-        snake.append(health)
-        snake.append(body)
-        all_snakes.append(snake)
-
-    # find our snake, id is a string
-    my_snake_id = game_state["you"]["id"] 
-
-    next_move = "up"
+    next_move = mcts_search(state, time_limit=0.4)
+    
     print(f"MOVE {game_state['turn']}: {next_move}")
     return {"move": next_move, "shout": "I'm a snake! Hissss!"}
 
