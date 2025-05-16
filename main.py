@@ -10,11 +10,10 @@
 # To get you started we've included code to prevent your Battlesnake from moving backwards.
 # For more info see docs.battlesnake.com
 
-import random
-import math
 import typing
-from mcts import GameState, mcts_search
+from SnakeAI import SnakeAI
 
+snake_ai = SnakeAI() # Create an instance of the SnakeAI class
 
 # info is called when you create your Battlesnake on play.battlesnake.com
 # and controls your Battlesnake's appearance
@@ -25,22 +24,23 @@ def info() -> typing.Dict:
     return {
         "apiversion":
         "1",
-        "author":
-        "uber_snake_master_360_noscopes",
+        "Josepi The Moustache & Ram The Ham":
+        "Johnny SilverSnake",
         "color":
-        "#03d7fc",  # Color: neon green
+        "#c0d5c2",  
         "head":
-        "silly",
+        "dead",
         "tail":
-        "dragon",
+        "freckled",
         "version":
-        "2.3.15.X-alpha_beta_omega_ultimate_edition_360_no_scopes.FINAL-VERSION"
+        "1"
     }
 
 
 # start is called when your Battlesnake begins a game
 def start(game_state: typing.Dict):
     print("Start Game:")
+    snake_ai.reset()
 
 
 # end is called when your Battlesnake finishes a game
@@ -68,12 +68,11 @@ Example of Move Request (the game_state received by move()) and Move Response (m
 https://docs.battlesnake.com/api/example-move"""
 
 def move(game_state: typing.Dict) -> typing.Dict:
-    board = game_state["board"]
-    you_id = game_state["you"]["id"]
-    state = GameState(board, you_id)
+    # Snake AI
+    snake_ai.update_state(game_state)
 
-    next_move = mcts_search(state, time_limit=0.45) # 450 ms seems good
-
+    next_move = snake_ai.get_Next_Move()
+    
     print(f"MOVE {game_state['turn']}: {next_move}")
     return {"move": next_move, "shout": "I'm a snake! Hissss!"}
 
@@ -83,18 +82,3 @@ if __name__ == "__main__":
 
     run_server({"info": info, "start": start, "move": move, "end": end})
 
-'''
-PROJECT NOTES - BATTLE SNAKER:
-* Read API-docs: https://docs.battlesnake.com/api
-
-* Use Minimax (swap for Monte Carlo Tree Search?) w. alpha, beta pruning to determine best move out of possible future states. We have to check how much time we have between server pings to calculate stuff. When 4 snakes remain, maybe just check       for states 2 moves ahead, but when less snakes remain, check for states 3 moves ahead...?
-
-* (TODO Josef) Implement enemy AI used in Monte Carlo tree search (based on Rami's new classes/ internal game state): basic A* for pathfinding to food items + use flood fill to determine if likely moving into a dead end that cannot be escaped. Add anything else?
-
-* Two roles for our two snakes:
-We'll run basically the same script on both snakes, but with different heuristics in the minimax function for each snake.
-
-Offensive snake - offensive strategy, tries to eat a lot of food, and tries to kill other snakes
-
-Defensive snake - defensive strategy, tries to stay alive and not get eaten by other snakes
-'''
