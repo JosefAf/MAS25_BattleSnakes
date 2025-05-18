@@ -5,10 +5,10 @@ from copy import deepcopy
 
 """
 NOTES:
-- We need to debug the get obstacle grid, as there are some bugs [Done]
+- We need to debug the get obstacle grid, as there are some bugs [Not finished, still something lurking about]
 - Maybe we can use a score for the grid, instead of 0 and 1, instead of blocking we score a cell based on how much we want to avoid it
 - Fine tune the scores
-- Add score for reducing other snakes reachable space
+- Add score for reducing other snakes reachable space [done]
 - Dynamic score, only add food score if we are low on hp or not larger than other snakes
 """
 
