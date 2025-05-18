@@ -27,7 +27,7 @@ def info() -> typing.Dict:
         "Josepi The Moustache & Ram The Ham":
         "Johnny SilverSnake",
         "color":
-        "#c0d5c2",  
+        "#FFD700",  
         "head":
         "dead",
         "tail":
