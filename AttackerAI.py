@@ -5,7 +5,11 @@ import math
 from collections import deque
 
 
-class SnakeAI:
+"""Differences AttackerAI and DefenderAI:
+- AttackerAI uses a probability grid instead of a binary grid."""
+
+
+class AttackerAI:
 
     def __init__(self):
         self.prev_lengths = {}

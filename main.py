@@ -13,11 +13,12 @@
 # IMPORTANT INFO: When creating the battlesnakes, grab the server URL and add "snakeA" to the end of the URL when creating Snake A, such that the URL ends with "/snakeA". Similar for Snake D, the URL should end with "/snakeD". 
 
 import typing
-from SnakeAI import SnakeAI
+from AttackerAI import AttackerAI
+from DefenderAI import DefenderAI
 from flask import Flask, request, jsonify #For collaboration between snakes
 
-snake_a_ai = SnakeAI() # Create an instance of the SnakeAI class for Snake A
-snake_d_ai = SnakeAI() # Create an instance of the SnakeAI class for Snake D
+snake_a_ai = AttackerAI() # Create an instance of the SnakeAI class for Snake A
+snake_d_ai = DefenderAI() # Create an instance of the SnakeAI class for Snake D
 
 app = Flask(__name__) #Start web server in this file
 shared_data = {}  # Shared data in dictionary for coordination between snakes
@@ -79,7 +80,7 @@ def start_snakeD():
     game_state = request.get_json() #Not used atm
     print("Start Game:")
     snake_d_ai.reset()
-    return {"status": "ok"}
+    return {"status": "ok"} #Flask gets upset if this line is omitted
 
 # end is called when your Battlesnake finishes a game
 @app.route("/snakeA/end", methods=["POST"])
@@ -88,6 +89,7 @@ def end():
     #Retrieve game_state like this when using Flask:
     game_state = request.get_json() #Not used atm
     print("End Game.\n")
+    return {"status": "ok"} #Flask gets upset if this line is omitted
 
 
 # move is called on every turn and returns your next move
