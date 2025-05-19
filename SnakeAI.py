@@ -3,19 +3,21 @@ import random
 import heapq
 import math
 from collections import deque
-
+import copy
 
 class SnakeAI:
-
     def __init__(self):
+        # track previous lengths for growth detection
         self.prev_lengths = {}
+        # probability grid of opponent moves
         self.grid = None
 
     def reset(self):
+        # clear history between games
         self.prev_lengths = {}
 
     def update_state(self, game_state):
-        # --- load raw state ---
+        # load board, snakes, and food
         self.board = game_state['board']
         self.my_snake_id = game_state['you']['id']
         self.width = self.board['width']
@@ -23,313 +25,287 @@ class SnakeAI:
         self.food = {(f['x'], f['y']) for f in self.board['food']}
         self.snakes = {s['id']: s for s in self.board['snakes']}
 
-        # --- detect “just ate” ---
-        curr_lens = {sid: len(s['body']) for sid, s in self.snakes.items()}
-        self.just_ate = {
-            sid: (sid in self.prev_lengths
-                  and curr_lens[sid] > self.prev_lengths[sid])
-            for sid in self.snakes
-        }
-        self.prev_lengths = curr_lens
+        # detect which snakes just ate
+        curr = {sid: len(s['body']) for sid, s in self.snakes.items()}
+        self.just_ate = {sid: curr[sid] > self.prev_lengths.get(sid, 0) for sid in curr}
+        self.prev_lengths = curr
 
-        # --- build the new probability grid ---
+        # build risk grid
         self.build_probability_grid()
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 1) PROBABILITY GRID
-    # ──────────────────────────────────────────────────────────────────────────
-    def build_probability_grid(self, debug: bool = True):
+    # 1) build risk grid of occupied and likely cells
+    def build_probability_grid(self, debug=False):
         W, H = self.width, self.height
-        grid = np.zeros((H, W), dtype=float)
-        DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        grid = np.zeros((H, W))
+        dirs = [(0,1),(0,-1),(1,0),(-1,0)]
 
-        # a) block all body segments (and “just‐ate” tails) at 1.0
+        # mark bodies as blocked
         for sid, s in self.snakes.items():
-            body = s['body']
-            xs = [pt['x'] for pt in body[:-1]]
-            ys = [pt['y'] for pt in body[:-1]]
-            grid[ys, xs] = 1.0
-            tx, ty = body[-1]['x'], body[-1]['y']
-            grid[ty, tx] = 1.0 if self.just_ate.get(sid, False) else grid[ty,
-                                                                          tx]
+            parts = [(pt['x'],pt['y']) for pt in s['body'][:-1]]
+            for x,y in parts:
+                grid[y,x] = 1.0
+            # block tail if just ate
+            tx, ty = s['body'][-1]['x'], s['body'][-1]['y']
+            if self.just_ate.get(sid):
+                grid[ty,tx] = 1.0
 
-        # stash base grid so expected_reach sees it
         self.grid = grid
 
-        # b) for each *other* snake, distribute probability over its next‐move cells
+        # spread opponent move probabilities
         for sid, s in self.snakes.items():
             if sid == self.my_snake_id:
                 continue
-
             hx, hy = s['body'][0]['x'], s['body'][0]['y']
             neck = tuple(s['body'][1].values())
-
-            # collect legal next cells
-            candidates = []
-            for dx, dy in DIRS:
-                nx, ny = hx + dx, hy + dy
-                if not (0 <= nx < W and 0 <= ny < H):
+            cands = []
+            for dx,dy in dirs:
+                nx, ny = hx+dx, hy+dy
+                if not (0<=nx<W and 0<=ny<H):
                     continue
-                if (nx, ny) == neck:
+                if (nx,ny) == neck:
                     continue
-                if grid[ny, nx] >= 1.0:
+                if grid[ny,nx] >= 1.0:
                     continue
-                candidates.append((nx, ny))
-
-            if not candidates:
+                cands.append((nx,ny))
+            if not cands:
                 continue
 
-            # compute weights based on distance to food and flood-fill reachability
             weights = []
-            for (nx, ny) in candidates:
-                # distance to nearest food
-                if self.food:
-                    dists = [abs(nx - fx) + abs(ny - fy) for fx, fy in self.food]
-                    min_dist = min(dists)
-                else:
-                    min_dist = W + H
-                weight_dist = 1.0 / (min_dist + 1)
-
-                # expected reachable area from this cell
-                reach_area = self.expected_reach(nx, ny)
-
-                weights.append(weight_dist * reach_area)
-
-            total_weight = sum(weights)
-            for (nx, ny), w in zip(candidates, weights):
-                if total_weight > 0:
-                    p = w / total_weight
-                else:
-                    p = 1.0 / len(candidates)
-                grid[ny, nx] = max(grid[ny, nx], p)
+            for nx,ny in cands:
+                dist = min((abs(nx-fx)+abs(ny-fy)) for fx,fy in self.food) if self.food else W+H
+                w_dist = 1.0/(dist+1)
+                w_reach = self.expected_reach(nx,ny)
+                weights.append(w_dist * w_reach)
+            total = sum(weights)
+            for (nx,ny),w in zip(cands,weights):
+                p = (w/total) if total>0 else 1.0/len(cands)
+                grid[ny,nx] = max(grid[ny,nx], p)
 
         self.grid = grid
         if debug:
-            for y in range(self.height - 1, -1, -1):
-                row = self.grid[y]
-                print(" ".join(f"{val:.2f}" for val in row))
+            for y in range(H-1,-1,-1):
+                print(' '.join(f'{v:.2f}' for v in grid[y]))
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 2) “RISK‐AWARE” PATHFINDING
-    # ──────────────────────────────────────────────────────────────────────────
+    # 2) A* with risk cost
     def expected_path_cost(self, start, goal, alpha=5.0):
         W, H = self.width, self.height
-        DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        dirs = [(0,1),(0,-1),(1,0),(-1,0)]
+        def h(a,b): return abs(a[0]-b[0]) + abs(a[1]-b[1])
 
-        def h(a, b):
-            return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
-        open_heap = [(h(start, goal), start)]
-        g_score = {start: 0.0}
-
-        while open_heap:
-            f, current = heapq.heappop(open_heap)
-            if current == goal:
-                return g_score[current]
-
-            for dx, dy in DIRS:
-                nx, ny = current[0] + dx, current[1] + dy
-                if not (0 <= nx < W and 0 <= ny < H):
+        open_set = [(h(start,goal), start)]
+        g = {start: 0.0}
+        while open_set:
+            _, curr = heapq.heappop(open_set)
+            if curr == goal:
+                return g[curr]
+            for dx,dy in dirs:
+                nx, ny = curr[0]+dx, curr[1]+dy
+                if not (0<=nx<W and 0<=ny<H):
                     continue
-                p_block = self.grid[ny, nx]
-                if p_block >= 1.0:
+                p = self.grid[ny,nx]
+                if p >= 1.0:
                     continue
-                step_cost = 1.0 + alpha * p_block
-                tentative_g = g_score[current] + step_cost
-                if tentative_g < g_score.get((nx, ny), float('inf')):
-                    g_score[(nx, ny)] = tentative_g
-                    heapq.heappush(open_heap, (tentative_g + h(
-                        (nx, ny), goal), (nx, ny)))
-
+                cost = 1.0 + alpha * p
+                ng = g[curr] + cost
+                if ng < g.get((nx,ny), float('inf')):
+                    g[(nx,ny)] = ng
+                    heapq.heappush(open_set, (ng + h((nx,ny),goal), (nx,ny)))
         return None
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 3) PROBABILISTIC REACH (FLOOD)
-    # ──────────────────────────────────────────────────────────────────────────
+    # 3) flood-fill expected reach
     def expected_reach(self, sx, sy):
         W, H = self.width, self.height
-        DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-        reach_p = np.zeros((H, W), dtype=float)
-        reach_p[sy, sx] = 1.0
-
-        q = deque([(sx, sy)])
+        if not (0<=sx<W and 0<=sy<H):
+            return 0.0
+        dirs = [(0,1),(0,-1),(1,0),(-1,0)]
+        reach = np.zeros((H, W))
+        reach[sy, sx] = 1.0
+        q = deque([(sx,sy)])
         while q:
-            x, y = q.popleft()
-            base = reach_p[y, x]
-            for dx, dy in DIRS:
-                nx, ny = x + dx, y + dy
-                if not (0 <= nx < W and 0 <= ny < H):
+            x,y = q.popleft()
+            base = reach[y,x]
+            for dx,dy in dirs:
+                nx, ny = x+dx, y+dy
+                if not (0<=nx<W and 0<=ny<H):
                     continue
-                p_block = self.grid[ny, nx]
-                if p_block >= 1.0:
+                p = self.grid[ny,nx]
+                if p >= 1.0:
                     continue
-                new_p = base * (1.0 - p_block)
-                if new_p > reach_p[ny, nx]:
-                    reach_p[ny, nx] = new_p
-                    q.append((nx, ny))
+                npv = base * (1.0 - p)
+                if npv > reach[ny,nx]:
+                    reach[ny,nx] = npv
+                    q.append((nx,ny))
+        return reach.sum()
 
-        return reach_p.sum()
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # 4) SAFE MOVES (avoid high-risk head-on collisions)
-    # ──────────────────────────────────────────────────────────────────────────
+    # 4) get safe moves
     def get_Safe_Moves(self):
         head = self.snakes[self.my_snake_id]['body'][0]
         x, y = head['x'], head['y']
-        DIRS = {
-            'up': (0, 1),
-            'down': (0, -1),
-            'left': (-1, 0),
-            'right': (1, 0)
-        }
-
-        # collect all moves not certain death (p_block < 1)
-        moves = []
-        for m, (dx, dy) in DIRS.items():
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < self.width and 0 <= ny < self.height:
-                p = self.grid[ny, nx]
-                if p < 1.0:
-                    moves.append((m, p))
-
-        if not moves:
+        dirs = {'up':(0,1),'down':(0,-1),'left':(-1,0),'right':(1,0)}
+        opts = []
+        for m,(dx,dy) in dirs.items():
+            nx, ny = x+dx, y+dy
+            if 0<=nx<self.width and 0<=ny<self.height and self.grid[ny,nx] < 1.0:
+                opts.append((m, self.grid[ny,nx]))
+        if not opts:
             return []
+        zeros = [m for m,p in opts if p == 0.0]
+        if zeros:
+            return zeros
+        minp = min(p for _,p in opts)
+        return [m for m,p in opts if p == minp]
 
-        # if any move has zero risk, keep only those
-        zero_moves = [m for m, p in moves if p == 0.0]
-        if zero_moves:
-            return zero_moves
-
-        # otherwise keep only the move(s) with minimal risk
-        min_p = min(p for _, p in moves)
-        return [m for m, p in moves if p == min_p]
-
-    def pick_best_move(self, scores):
-        best = max(scores.values())
-        choices = [m for m, s in scores.items() if s == best]
-        print(f"Choices: {choices}")
-        return random.choice(choices)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # 5) SCORING FUNCTIONS USING THE PROBABILITY GRID
-    # ──────────────────────────────────────────────────────────────────────────
-    def get_Food_Score(self, safe_moves):
+    # 5a) food score
+    def get_Food_Score(self, moves):
         if not self.food:
-            return {m: 0.0 for m in safe_moves}
-
-        head = self.snakes[self.my_snake_id]['body'][0]
-        hx, hy = head['x'], head['y']
-
-        # current best expected-cost to any food
-        best0 = min((self.expected_path_cost((hx, hy), f) or np.inf)
-                    for f in self.food)
-
-        scores = {}
-        for m in safe_moves:
-            dx, dy = {
-                'up': (0, 1),
-                'down': (0, -1),
-                'left': (-1, 0),
-                'right': (1, 0)
-            }[m]
-            nx, ny = hx + dx, hy + dy
-
-            if (nx, ny) in self.food:
-                scores[m] = best0 + 10.0
+            return {m: 0.0 for m in moves}
+        hx, hy = self.snakes[self.my_snake_id]['body'][0].values()
+        best0 = min((self.expected_path_cost((hx,hy),f) or math.inf) for f in self.food)
+        sc = {}
+        for m in moves:
+            dx,dy = {'up':(0,1),'down':(0,-1),'left':(-1,0),'right':(1,0)}[m]
+            nx, ny = hx+dx, hy+dy
+            if (nx,ny) in self.food:
+                sc[m] = best0 + 10.0
             else:
-                best1 = min((self.expected_path_cost((nx, ny), f) or np.inf)
-                            for f in self.food)
-                scores[m] = best0 - best1
+                best1 = min((self.expected_path_cost((nx,ny),f) or math.inf) for f in self.food)
+                sc[m] = best0 - best1
+        return sc
 
-        return scores
-
-    def get_Space_Score(self, safe_moves):
-        head = self.snakes[self.my_snake_id]['body'][0]
-        hx, hy = head['x'], head['y']
+    # 5b) space score
+    def get_Space_Score(self, moves):
+        hx, hy = self.snakes[self.my_snake_id]['body'][0].values()
+        base = self.expected_reach(hx,hy)
         norm = 10.0 / (self.width * self.height)
+        sc = {}
+        for m in moves:
+            dx,dy = {'up':(0,1),'down':(0,-1),'left':(-1,0),'right':(1,0)}[m]
+            nx, ny = hx+dx, hy+dy
+            sc[m] = (self.expected_reach(nx,ny) - base) * norm
+        return sc
 
-        curr_space = self.expected_reach(hx, hy)
-        scores = {}
-        for m in safe_moves:
-            dx, dy = {
-                'up': (0, 1),
-                'down': (0, -1),
-                'left': (-1, 0),
-                'right': (1, 0)
-            }[m]
-            nx, ny = hx + dx, hy + dy
-            scores[m] = (self.expected_reach(nx, ny) - curr_space) * norm
-
-        return scores
-
-    def get_Enemy_Space_Score(self, safe_moves):
-        me = self.snakes[self.my_snake_id]['body'][0]
-        mx, my = me['x'], me['y']
-        others = [
-            s['body'][0] for sid, s in self.snakes.items()
-            if sid != self.my_snake_id
-        ]
+    # 5c) enemy space score
+    def get_Enemy_Space_Score(self, moves):
+        hx, hy = self.snakes[self.my_snake_id]['body'][0].values()
+        others = [s['body'][0] for sid,s in self.snakes.items() if sid != self.my_snake_id]
         if not others:
-            return {m: 0.0 for m in safe_moves}
-
-        target = min(others, key=lambda h: abs(h['x'] - mx) + abs(h['y'] - my))
-        ox, oy = target['x'], target['y']
+            return {m: 0.0 for m in moves}
+        ox, oy = min(others, key=lambda h: abs(h['x']-hx) + abs(h['y']-hy)).values()
         norm = 10.0 / (self.width * self.height)
+        sc = {}
+        for m in moves:
+            dx,dy = {'up':(0,1),'down':(0,-1),'left':(-1,0),'right':(1,0)}[m]
+            nx, ny = hx+dx, hy+dy
+            saved = self.grid.copy()
+            self.grid[ny,nx] = 1.0
+            sc[m] = -self.expected_reach(ox,oy) * norm
+            self.grid = saved
+        return sc
 
-        scores = {}
-        for m in safe_moves:
-            dx, dy = {
-                'up': (0, 1),
-                'down': (0, -1),
-                'left': (-1, 0),
-                'right': (1, 0)
-            }[m]
-            nx, ny = mx + dx, my + dy
+    # 6) depth-limited lookahead
+    def lookahead_move(self, depth=4):
+        # try each safe root move
+        opts = self.get_Safe_Moves()
+        print(f"Root safe moves: {opts}")
+        if not opts:
+            return random.choice(['up','down','left','right'])
+        best, choice = -math.inf, None
+        for m in opts:
+            v = self._search_value(self._clone_state(), m, depth, path=[m])
+            print(f"Move {m} -> score = {v}")
+            if v > best:
+                best, choice = v, m
+        print(f"Chosen move: {choice} with score = {best}")
+        return choice
 
-            save = self.grid.copy()
-            self.grid[ny, nx] = 1.0
-            reach = self.expected_reach(ox, oy)
-            self.grid = save
-
-            scores[m] = -reach * norm
-
-        return scores
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # 6) FINAL MOVE PICKER
-    # ──────────────────────────────────────────────────────────────────────────
-    def get_Next_Move(self, debug: bool = True):
+    # recursive search with path tracking
+    def _search_value(self, state, move, depth, path=None):
+        # simulate own move; record death as heavy penalty
+        if path is None:
+            path = [move]
+        alive = self._apply_my_move(state, move)
+        if not alive:
+            print(f"Explored move: {' -> '.join(path)} score = -1000000")
+            return -1e6
+        # simulate opponents and rebuild grid
+        self._apply_opponents(state)
+        self._load_state_from_sim(state)
+        self.build_probability_grid()
+        # get safe moves
         safe = self.get_Safe_Moves()
         if not safe:
-            return random.choice(["up", "down", "left", "right"])
+            print(f"Explored move: {' -> '.join(path)} score = -1000000")
+            return -1e6
+        # leaf: compute and report score
+        if depth == 1:
+            fs = self.get_Food_Score(safe)
+            ss = self.get_Space_Score(safe)
+            es = self.get_Enemy_Space_Score(safe)
+            score = max((fs[m] + 4.0*ss[m] + 2.2*es[m]) for m in safe)
+            print(f"Explored move: {' -> '.join(path)} score = {score}")
+            return score
+        # deepen search
+        best_val = -math.inf
+        for m in safe:
+            val = self._search_value(self._clone_state(state), m, depth-1, path + [m])
+            best_val = max(best_val, val)
+        return best_val
 
-        me = self.snakes[self.my_snake_id]
-        my_len = len(me['body'])
-        health = me.get('health', 100)
-        other_max = max(
-            (len(s['body'])
-             for sid, s in self.snakes.items() if sid != self.my_snake_id),
-            default=0)
-        consider_food = not (my_len >= other_max + 3 and health >= 25)
-
-        fs = self.get_Food_Score(safe) if consider_food else {
-            m: 0
-            for m in safe
+    # clone state for simulation
+    def _clone_state(self, state=None):
+        base = state or {
+            'snakes': self.snakes,
+            'food': set(self.food),
+            'prev_lengths': dict(self.prev_lengths),
+            'width': self.width,
+            'height': self.height
         }
-        for move, score in fs.items(): # for if no move is found
-            if math.isnan(score):
-                fs[move] = 0
+        return copy.deepcopy(base)
 
-        
-        ss = self.get_Space_Score(safe)
-        es = self.get_Enemy_Space_Score(safe)
+    # apply own move
+    def _apply_my_move(self, state, move):
+        dirs = {'up':(0,1),'down':(0,-1),'left':(-1,0),'right':(1,0)}
+        me = state['snakes'][self.my_snake_id]
+        hx, hy = me['body'][0]['x'], me['body'][0]['y']
+        dx, dy = dirs[move]
+        nx, ny = hx+dx, hy+dy
+        # wall or body collision
+        if not (0<=nx<state['width'] and 0<=ny<state['height']):
+            return False
+        for s in state['snakes'].values():
+            if any(pt['x']==nx and pt['y']==ny for pt in s['body']):
+                return False
+        me['body'].insert(0, {'x': nx, 'y': ny})
+        if (nx, ny) not in state['food']:
+            me['body'].pop()
+        else:
+            state['food'].remove((nx, ny))
+        return True
 
-        wf = 1.0 if consider_food else 0.0
-        ws, we = 4.0, 2.2
+    # apply opponents' moves
+    def _apply_opponents(self, state):
+        W, H = state['width'], state['height']
+        for sid, s in state['snakes'].items():
+            if sid == self.my_snake_id:
+                continue
+            hx, hy = s['body'][0]['x'], s['body'][0]['y']
+            cands = []
+            for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
+                nx, ny = hx+dx, hy+dy
+                if 0<=nx<W and 0<=ny<H and self.grid[ny,nx]<1.0:
+                    cands.append((nx, ny, self.grid[ny,nx]))
+            if not cands:
+                continue
+            bx, by, _ = max(cands, key=lambda t: t[2])
+            s['body'].insert(0, {'x': bx, 'y': by})
+            if not self.just_ate.get(sid, False):
+                s['body'].pop()
 
-        total = {m: wf * fs[m] + ws * ss[m] + we * es[m] for m in safe}
-        if debug:
-            print("Food:", fs, "\nSpace:", ss, "\nEnemy:", es, "\nTotal:",
-                  total)
+    # load simulated state into AI
+    def _load_state_from_sim(self, state):
+        self.snakes = state['snakes']
+        self.food = set(state['food'])
+        self.prev_lengths = state['prev_lengths']
 
-        return self.pick_best_move(total)
+    def get_Next_Move(self, debug=True):
+        return self.lookahead_move(depth=4)
