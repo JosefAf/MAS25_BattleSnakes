@@ -42,7 +42,7 @@ class AttackerAI:
     # ──────────────────────────────────────────────────────────────────────────
     # 1) PROBABILITY GRID
     # ──────────────────────────────────────────────────────────────────────────
-    def build_probability_grid(self, debug: bool = True):
+    def build_probability_grid(self, debug: bool = False):
         W, H = self.width, self.height
         grid = np.zeros((H, W), dtype=float)
         DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -239,7 +239,7 @@ class AttackerAI:
             nx, ny = hx + dx, hy + dy
 
             if (nx, ny) in self.food:
-                scores[m] = best0 + 10.0
+                scores[m] = best0 #+ 10.0
             else:
                 best1 = min((self.expected_path_cost((nx, ny), f) or np.inf)
                             for f in self.food)
@@ -302,7 +302,7 @@ class AttackerAI:
     # ──────────────────────────────────────────────────────────────────────────
     # 6) FINAL MOVE PICKER
     # ──────────────────────────────────────────────────────────────────────────
-    def get_Next_Move(self, debug: bool = True):
+    def get_Next_Move(self, debug: bool = False):
         safe = self.get_Safe_Moves()
         if not safe:
             return random.choice(["up", "down", "left", "right"])

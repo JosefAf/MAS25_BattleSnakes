@@ -16,12 +16,18 @@ import typing
 from AttackerAI import AttackerAI
 from DefenderAI import DefenderAI
 from flask import Flask, request, jsonify #For collaboration between snakes
+import time
 
 snake_a_ai = AttackerAI() # Create an instance of the SnakeAI class for Snake A
 snake_d_ai = DefenderAI() # Create an instance of the SnakeAI class for Snake D
 
 app = Flask(__name__) #Start web server in this file
-shared_data = {}  # Shared data in dictionary for coordination between snakes
+attacker_data = { #attacker data for defender to read and use when planning its next move
+    "ID" : None, #Each snake's unique IDs is set by the engine and must be read by us
+    "turn" : None, #for making sure available data is for the current turn
+    "next_move" : None, #attacker's next move
+    "closest_food_pos" : None #reserve food closest to snake A to snake A?
+}
 
 #Just testing the server
 @app.route("/")
@@ -40,11 +46,11 @@ def info_snakeA() -> typing.Dict:
         "Josepi The Moustache & Ram The Ham":
         "Johnny Aggro",
         "color":
-        "#f20f29",  
+        "#e77aeb",  
         "head":
         "dead",
         "tail":
-        "freckled",
+        "sharp",
         "version":
         "1"
     }
@@ -57,11 +63,11 @@ def info_snakeD() -> typing.Dict:
         "Josepi The Moustache & Ram The Ham":
         "Johnny Defendo",
         "color":
-        "#2417bd",  
+        "#e77aeb",  
         "head":
         "dead",
         "tail":
-        "freckled",
+        "round-bum",
         "version":
         "1"
     }
@@ -70,7 +76,9 @@ def info_snakeD() -> typing.Dict:
 @app.route("/snakeA/start", methods=["POST"])
 def start_snakeA():
     #Retrieve game_state like this when using Flask:
-    game_state = request.get_json() #Not used atm
+    game_state = request.get_json()
+    #Read attacker's ID and write to attacker_data
+    attacker_data["ID"] = game_state["you"]["id"]
     print("Start Game:")
     snake_a_ai.reset
     return {"status": "ok"} #Flask gets upset if this line is omitted
@@ -116,10 +124,11 @@ def move_snakeA():
     #Retrieve game_state like this when using Flask:
     game_state = request.get_json()
     
-    # Snake AI
     snake_a_ai.update_state(game_state)
-
     next_move = snake_a_ai.get_Next_Move()
+    
+    #Update attacker_data for defender
+    current_turn = game_state["turn"]
     
     print(f"MOVE {game_state['turn']}: {next_move}")
     return {"move": next_move, "shout": "I'm snake A! Hissss!"}
@@ -128,10 +137,24 @@ def move_snakeA():
 def move_snakeD():
     #Retrieve game_state like this when using Flask:
     game_state = request.get_json()
-    
-    # Snake AI
-    snake_d_ai.update_state(game_state)
 
+    #Use attacker snake's ID in attacker_data to check if attacker is still alive before deciding to wait for attacker_data to be updated for this turn.
+
+    # TODO
+    
+    current_turn = game_state["turn"]
+    # Wait (a few ms at a time) until attacker move for this turn is available
+    timeout = 0.2  # Max 200 ms wait
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        #Check if attacker_data has been updated for this turn
+        if attacker_data["turn"] == current_turn:
+            break
+        else:
+            time.sleep(0.005)  # Wait 5 ms
+
+
+    snake_d_ai.update_state(game_state)
     next_move = snake_d_ai.get_Next_Move()
 
     print(f"MOVE {game_state['turn']}: {next_move}")

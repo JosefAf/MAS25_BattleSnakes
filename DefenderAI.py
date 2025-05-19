@@ -47,13 +47,13 @@ class DefenderAI:
 
         # get obstacle grid
         self.get_Obstacle_Grid(
-            False)  #True parameter gives debug print of grid
+            True)  #True parameter gives debug print of grid
 
     def reset(self):
         # clear the length dict for a new game
         self.prev_lengths = {}
 
-    def get_Obstacle_Grid(self, debug: bool = False):
+    def get_Obstacle_Grid(self, debug: bool = True):
         """
         - Create a 2D array representing the game board.
         - Mark all snake body segments excluding the tail as blocked.
@@ -70,10 +70,11 @@ class DefenderAI:
         grid = np.zeros(
             (H, W), dtype=np.uint8
         )  #storing the type numpy.uint8 - unsigned 8-bit integer (0 to 255)
-
+        
         # 1) Block body segments for all snakes (except tails unless they just ate)
         for sid, s in self.snakes.items():
             body = s['body']
+            
             # a) block all but the tail
             xs = [pt['x'] for pt in body[:-1]]
             ys = [pt['y'] for pt in body[:-1]]
@@ -112,15 +113,17 @@ class DefenderAI:
                 nx, ny = ox + dx, oy + dy
                 if 0 <= nx < W and 0 <= ny < H and (ox + dx,
                                                     oy + dy) != other_nec:
-                    grid[
-                        ny,
+                    grid[ny,
                         nx] = 1  #assign value 1 (blocked) to this position in grid
                     other_nei.add((nx, ny))
 
-            # if we’re longer, consider shared neighbor cells as free
+            # if we’re longer, consider shared neighbor cells as free, unless it is in position of our or enemy body part that is not a head (because colliding there would kill us).
             if my_len > other_len:
+                my_body_except_head = set((pt['x'], pt['y']) for pt in me['body'][1:])
+                other_body_except_head = set((pt['x'], pt['y']) for pt in s['body'][1:])
                 for (x, y) in my_nei & other_nei:
-                    grid[y, x] = 0
+                    if (x, y) not in my_body_except_head or other_body_except_head:
+                        grid[y, x] = 0
 
         self.grid = grid
         # debug print
@@ -336,7 +339,7 @@ class DefenderAI:
             # if we’d land on food, give a big bonus
             if (nx, ny) in self.food:
                 scores[
-                    move] = curr_min + 10  # we want to always eat food if possible
+                    move] = curr_min #+ 10  # we want to always eat food if possible
                 continue
 
             # otherwise measure new closest food distance
