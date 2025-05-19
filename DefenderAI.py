@@ -14,7 +14,7 @@ class DefenderAI:
         }  # remember the length of each snake before the move
         self.grid = None
 
-    def update_state(self, game_state):
+    def update_state(self, game_state, attacker_data):
         """
         get new game state and update the fields.
         Also compute self.just_ate by comparing self.prev_lengths
@@ -46,14 +46,13 @@ class DefenderAI:
         self.prev_lengths = current_lengths
 
         # get obstacle grid
-        self.get_Obstacle_Grid(
-            True)  #True parameter gives debug print of grid
+        self.get_Obstacle_Grid(attacker_data, True)  #True parameter gives debug print of grid
 
     def reset(self):
         # clear the length dict for a new game
         self.prev_lengths = {}
 
-    def get_Obstacle_Grid(self, debug: bool = True):
+    def get_Obstacle_Grid(self, attacker_data, debug: bool = True):
         """
         - Create a 2D array representing the game board.
         - Mark all snake body segments excluding the tail as blocked.
@@ -66,6 +65,7 @@ class DefenderAI:
         W, H = self.width, self.height
         gm = self.get_Manhattan  #UNUSED
         DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]  #right, left, up, down
+        DIRECTIONS = {"up": (1, 0), "down": (-1, 0), "left": (0, -1), "right":(0, 1)}
 
         grid = np.zeros(
             (H, W), dtype=np.uint8
@@ -125,6 +125,19 @@ class DefenderAI:
                     if (x, y) not in my_body_except_head or other_body_except_head:
                         grid[y, x] = 0
 
+        # 4) If we have attacker data, block attacker's next move cell for the defender:
+        if attacker_data is not None:
+            living_snakes = self.board["snakes"]
+            for snake in living_snakes:
+                if snake["id"] == attacker_data["ID"]:
+                    attacker_head = snake["body"][0]
+                    attacker_head_pos = (attacker_head["x"], attacker_head["y"])
+                    attacker_next_move = attacker_data["next_move"]
+                    attacker_next_pos = (attacker_head_pos[0] + DIRECTIONS[attacker_next_move][0], 
+                                         attacker_head_pos[1] + DIRECTIONS[attacker_next_move][1])
+                    if 0 <= attacker_next_pos[0] < W and 0 <= attacker_next_pos[1] < H:
+                        grid[attacker_next_pos[1], attacker_next_pos[0]] = 1
+        
         self.grid = grid
         # debug print
         if debug:

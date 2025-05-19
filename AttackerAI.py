@@ -18,7 +18,7 @@ class AttackerAI:
     def reset(self):
         self.prev_lengths = {}
 
-    def update_state(self, game_state):
+    def update_state(self, game_state, defender_ID):
         # --- load raw state ---
         self.board = game_state['board']
         self.my_snake_id = game_state['you']['id']
@@ -37,12 +37,12 @@ class AttackerAI:
         self.prev_lengths = curr_lens
 
         # --- build the new probability grid ---
-        self.build_probability_grid()
+        self.build_probability_grid(defender_ID, False)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 1) PROBABILITY GRID
     # ──────────────────────────────────────────────────────────────────────────
-    def build_probability_grid(self, debug: bool = False):
+    def build_probability_grid(self, defender_ID, debug: bool = False):
         W, H = self.width, self.height
         grid = np.zeros((H, W), dtype=float)
         DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -54,15 +54,18 @@ class AttackerAI:
             ys = [pt['y'] for pt in body[:-1]]
             grid[ys, xs] = 1.0
             tx, ty = body[-1]['x'], body[-1]['y']
-            grid[ty, tx] = 1.0 if self.just_ate.get(sid, False) else grid[ty,
-                                                                          tx]
+            grid[ty, tx] = 1.0 if self.just_ate.get(sid, False) else grid[ty,tx]
 
         # stash base grid so expected_reach sees it
         self.grid = grid
 
         # b) for each *other* snake, distribute probability over its next‐move cells
         for sid, s in self.snakes.items():
-            if sid == self.my_snake_id:
+            if sid == self.my_snake_id: #skip attacker snake
+                continue
+
+            #skip defender snake, because it will use attacker data to avoid attacker's next move cell
+            if sid == defender_ID:
                 continue
 
             hx, hy = s['body'][0]['x'], s['body'][0]['y']
@@ -88,8 +91,17 @@ class AttackerAI:
             for (nx, ny) in candidates:
                 # distance to nearest food
                 if self.food:
-                    dists = [abs(nx - fx) + abs(ny - fy) for fx, fy in self.food]
-                    min_dist = min(dists)
+                    #dists = [abs(nx - fx) + abs(ny - fy) for fx, fy in self.food] #using manhattan distance
+                    #using dijkstra distance instead of manhattan distance:
+                    dists = {}
+                    for fx, fy in self.food:
+                        expected_distance = self.expected_path_cost((nx, ny), (fx, fy))
+                        if expected_distance is not None: #i.e. path found
+                            dists[(fx, fy)] = expected_distance
+                    if dists:
+                        min_dist = min(dists.values())
+                    else:
+                        min_dist = W + H #this can probably be improved but it works for now
                 else:
                     min_dist = W + H
                 weight_dist = 1.0 / (min_dist + 1)

@@ -26,8 +26,9 @@ attacker_data = { #attacker data for defender to read and use when planning its 
     "ID" : None, #Each snake's unique IDs is set by the engine and must be read by us
     "turn" : None, #for making sure available data is for the current turn
     "next_move" : None, #attacker's next move
-    "closest_food_pos" : None #reserve food closest to snake A to snake A?
+    "closest_food_pos" : None #reserve food closest to snake A to snake A? Unused atm
 }
+defender_ID = None
 
 #Just testing the server
 @app.route("/")
@@ -86,6 +87,7 @@ def start_snakeA():
 def start_snakeD():
     #Retrieve game_state like this when using Flask:
     game_state = request.get_json() #Not used atm
+    defender_ID = game_state["you"]["id"]
     print("Start Game:")
     snake_d_ai.reset()
     return {"status": "ok"} #Flask gets upset if this line is omitted
@@ -124,11 +126,14 @@ def move_snakeA():
     #Retrieve game_state like this when using Flask:
     game_state = request.get_json()
     
-    snake_a_ai.update_state(game_state)
+    snake_a_ai.update_state(game_state, defender_ID)
     next_move = snake_a_ai.get_Next_Move()
     
     #Update attacker_data for defender
     current_turn = game_state["turn"]
+    attacker_data["turn"] = current_turn
+    attacker_data["next_move"] = next_move
+    #TODO attacker_data["closest_food_pos"] = snake_a_ai.get_Closest_Food_Pos() #method not implemented yet
     
     print(f"MOVE {game_state['turn']}: {next_move}")
     return {"move": next_move, "shout": "I'm snake A! Hissss!"}
@@ -139,26 +144,43 @@ def move_snakeD():
     game_state = request.get_json()
 
     #Use attacker snake's ID in attacker_data to check if attacker is still alive before deciding to wait for attacker_data to be updated for this turn.
+    attacker_id = attacker_data["ID"]
+    alive_snakes = game_state["board"]["snakes"]
+    attacker_alive = any(snake["id"] == attacker_id for snake in alive_snakes)
 
-    # TODO
-    
-    current_turn = game_state["turn"]
-    # Wait (a few ms at a time) until attacker move for this turn is available
-    timeout = 0.2  # Max 200 ms wait
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        #Check if attacker_data has been updated for this turn
-        if attacker_data["turn"] == current_turn:
-            break
+    if attacker_alive:
+        current_turn = game_state["turn"]
+        # Wait (a few ms at a time) until attacker move for this turn is available
+        timeout = 0.2  # Max 200 ms wait
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            #Check if attacker_data has been updated for this turn
+            if attacker_data["turn"] == current_turn:
+                break
+            else:
+                time.sleep(0.005)  # Wait 5 ms
+
+        timeout_reached = False
+        if time.time() - start_time >= timeout:
+            timeout_reached = True
+
+        #Reaching this point means attacker alive and we have attacker data for this turn or timeout reached
+        if timeout_reached:
+            snake_d_ai.update_state(game_state, None)
         else:
-            time.sleep(0.005)  # Wait 5 ms
+            snake_d_ai.update_state(game_state, attacker_data)
 
+        next_move = snake_d_ai.get_Next_Move()
+    
+        print(f"MOVE {game_state['turn']}: {next_move}")
+        return {"move": next_move, "shout": "I'm snake D! Hissss!"}
 
-    snake_d_ai.update_state(game_state)
-    next_move = snake_d_ai.get_Next_Move()
-
-    print(f"MOVE {game_state['turn']}: {next_move}")
-    return {"move": next_move, "shout": "I'm snake D! Hissss!"}
+    else: #attacker dead, move on without attacker_data
+        snake_d_ai.update_state(game_state, None)
+        next_move = snake_d_ai.get_Next_Move()
+    
+        print(f"MOVE {game_state['turn']}: {next_move}")
+        return {"move": next_move, "shout": "I'm snake D! Hissss!"}
 
 # Start server when `python main.py` is run
 if __name__ == "__main__":
